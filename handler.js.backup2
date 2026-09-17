@@ -1,0 +1,175 @@
+const checkAntiLink = require("./antiLink");
+const checkHealth = require("./health");
+	const fs = require('fs');
+const path = require('path');
+
+// ==========================================
+// KONFIGURASI WHITELIST & LEVEL (PAKAI ID LID)
+// ==========================================
+const WHITELIST_NUMBERS = [
+    '32303086604314',      // Owner (nomor HP asli bot)
+    '268921357783190',    // Teman 1 (ID LID)
+    '265313769812141',    // Teman 1 (ID LID)
+    '26848461385780',    // Teman 1 (ID LID)
+    '67040194896066',    // Teman 1 (ID LID)
+    '6289876543210',      // Teman 2 (nomor HP)
+
+
+];
+
+const spamCheck = false; // Nonaktifkan sementara
+const ACCESS_LEVELS = {
+
+    '32303086604314': 2,   // Owner
+    '268921357783190': 1, // Admin (ID LID)
+    '26848461385780': 1, // Admin (ID LID)': 1, // Admin (ID LID)
+    '8265313769812141': 1, // Admin (ID LID)
+    '67040194896066': 1, // Admin (ID LID)
+    '6289876543210': 0,   // Member
+
+
+};
+
+// ==========================================
+// FUNGSI BERSIHKAN JID
+// ==========================================
+function cleanJid(jid) {
+    if (!jid) return null;
+    // Hapus semua kecuali angka dan @
+    let clean = jid.replace(/[^0-9@]/g, '');
+    return clean.split('@')[0];
+}
+
+module.exports = async (sock, m) => {
+    const text = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
+    const prefix = '.';
+    
+    if (!text.startsWith(prefix)) return;
+
+    // ==========================================
+    // AMBIL ID PENGIRIM (LANGSUNG DARI KEY)
+    // ==========================================
+    let rawSender = m.key.participant || m.key.remoteJid;
+    const senderNumber = cleanJid(rawSender);
+
+    if (!senderNumber) {
+        console.log('⚠️ Tidak bisa detect ID pengirim');
+        return;
+    }
+
+    console.log(`🔍 ID terdeteksi: ${senderNumber}`);
+    console.log(`📋 Whitelist: ${WHITELIST_NUMBERS.join(', ')}`);
+
+    // ==========================================
+    // CEK WHITELIST
+    // ==========================================
+    if (!WHITELIST_NUMBERS.includes(senderNumber)) {
+        console.log(`⛔ [DITOLAK] ${senderNumber} tidak ada di whitelist`);
+        return await sock.sendMessage(m.key.remoteJid, { 
+            text: `⛔ *AKSES DITOLAK*\n\nID *${senderNumber}* tidak terdaftar.` 
+        }, { quoted: m });
+    }
+
+    const args = text.slice(prefix.length).trim().split(/ +/);
+    let command = args.shift().toLowerCase();
+        if (command === 'health' || command === 'status') {
+            const os = require('os');
+            const uptime = process.uptime();
+            const jam = Math.floor(uptime / 3600);
+            const menit = Math.floor((uptime % 3600) / 60);
+            const ram = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
+            const totalRam = (os.totalmem() / 1024 / 1024).toFixed(2);
+            const ping = Date.now() - (m.timestamp ? m.timestamp * 1000 : Date.now());
+            return m.reply(`🤖 *BOT HEALTH STATUS*\n\n⏱️ *Uptime:* ${jam} Jam ${menit} Menit\n🧠 *RAM Usage:* ${ram} MB / ${totalRam} MB\n📡 *Ping:* ${ping} ms\n🔋 *Mode:* Public`);
+        }
+    // === AUTO SECURITY ===
+    if (false && spamCheck) return m.reply(spamCheck);
+    // =====================
+    
+    console.log(`✅ [CMD] ${prefix}${command} | ${senderNumber}`);
+// ==========================================
+// COMMAND KHUSUS: .tin (CEK ID LID)
+// ==========================================
+if (command === 'tin' || command === 'cekid') {
+    let rawSender = m.key.participant || m.key.remoteJid;
+    let cleanId = rawSender.replace(/[^0-9@]/g, '').split('@')[0];
+
+    let replyText = `🔍 *INFO PENGGUNA*\n\n`;
+    replyText += `📱 *ID Terdeteksi:* ${cleanId}\n`;
+    replyText += ` *Raw JID:* ${rawSender}\n\n`;
+    replyText += `💡 *Tips:* Copy ID di atas dan masukkan ke WHITELIST_NUMBERS`;
+
+    return await sock.sendMessage(m.key.remoteJid, { 
+        text: replyText 
+    }, { quoted: m });
+}
+    // ==========================================
+    // CARI PLUGIN
+    // ==========================================
+    const pluginsDir = path.join(__dirname, 'plugins');
+    let pluginPath = null;
+
+    if (fs.existsSync(path.join(pluginsDir, `${command}.js`))) {
+        pluginPath = path.join(pluginsDir, `${command}.js`);
+    } else {
+        const files = fs.readdirSync(pluginsDir).filter(f => f.endsWith('.js'));
+        for (const file of files) {
+            try {
+                const p = require(path.join(pluginsDir, file));
+                if (p.alias && p.alias.includes(command)) {
+                    pluginPath = path.join(pluginsDir, file);
+                    break;
+                }
+            } catch (e) {}
+        }
+    }
+
+    if (pluginPath) {
+        try {
+            const plugin = require(pluginPath);
+            
+            // CEK LEVEL
+            const userLevel = ACCESS_LEVELS[senderNumber] || 0;
+            const requiredLevel = plugin.requiredLevel || 0;
+            
+            if (userLevel < requiredLevel) {
+                const levelNames = ['Member', 'Admin', 'Owner'];
+                return await sock.sendMessage(m.key.remoteJid, { 
+                    text: `⛔ *LEVEL TIDAK CUKUP*\nButuh: *${levelNames[requiredLevel]}*` 
+                }, { quoted: m });
+            }
+
+            // CEK BOT ADMIN (untuk grup)
+            let isBotAdmin = false;
+            if (m.key.remoteJid?.endsWith('@g.us')) {
+                try {
+                    const groupMeta = await sock.groupMetadata(m.key.remoteJid);
+                    const botId = sock.user?.id || sock.user?.jid;
+                    const bot = groupMeta.participants.find(p => p.id === botId);
+                    isBotAdmin = bot && (bot.admin === 'admin' || bot.admin === 'superadmin');
+                } catch (e) {}
+            }
+
+            // JALANKAN PLUGIN
+            await plugin.run({ 
+                sock, m, prefix, args, 
+                permission: { 
+                    level: userLevel,
+                    isAdmin: userLevel >= 1,
+                    isBotAdmin
+                } 
+            });
+
+        } catch (e) {
+            console.error(` Error di ${command}:`, e.message);
+            await sock.sendMessage(m.key.remoteJid, { 
+                text: `❌ Error: ${e.message}` 
+            }, { quoted: m });
+        }
+    } else {
+        await sock.sendMessage(m.key.remoteJid, { 
+            text: `❓ Command *${prefix}${command}* tidak ditemukan.` 
+        }, { quoted: m });
+    }
+};
+

@@ -1,0 +1,67 @@
+const axios = require('axios');
+const fs = require('fs');
+
+module.exports = {
+    alias: ['qc', 'quote', 'quotely'],
+    requiredLevel: 0,
+    
+    run: async ({ sock, m, prefix, args }) => {
+        const text = args.join(' ');
+        if (!text) {
+            return await sock.sendMessage(m.key.remoteJid, { 
+                text: `❌ *ERROR*\n\nMasukkan teks untuk quote!\nContoh: *${prefix}qc Halo dunia*` 
+            }, { quoted: m });
+        }
+
+        await sock.sendPresenceUpdate('composing', m.key.remoteJid);
+        await sock.sendMessage(m.key.remoteJid, { text: '⏳ *Sedang membuat quote...* ' }, { quoted: m });
+
+        try {
+            // Ambil foto profil pengirim (atau default kalau private)
+            let ppUrl = 'https://i.imgur.com/2wzGhpF.jpeg'; // Default avatar
+            try {
+                ppUrl = await sock.profilePictureUrl(m.sender, 'image');
+            } catch (e) { /* ignore */ }
+
+            // Panggil API QC yang stabil (Quotly/Botcahx)
+            const body = {
+                type: "quote",
+                format: "png",
+                backgroundColor: "#1e1e1e", // Warna background gelap ala WA
+                width: 512,
+                height: 768,
+                scale: 2,
+                messages: [{
+                    entities: [],
+                    avatar: true,
+                    from: {
+                        id: 1,
+                        name: m.pushName || "User",
+                        photo: { url: ppUrl }
+                    },
+                    text: text,
+                    replyMessage: {}
+                }]
+            };
+
+            const res = await axios.post('https://botcahx.eu.org/api/maker/quotely', body, {
+                headers: { 'Content-Type': 'application/json' },
+                responseType: 'arraybuffer'
+            });
+
+            // Kirim sebagai stiker
+            await sock.sendMessage(m.key.remoteJid, { 
+                sticker: res.data,
+                packname: 'Vurx12',
+                author: 'FORTXX'
+            }, { quoted: m });
+
+        } catch (e) {
+            console.error('[QC] Error:', e.message);
+            await sock.sendMessage(m.key.remoteJid, { 
+                text: '❌ Gagal membuat quote. Coba lagi nanti.' 
+            }, { quoted: m });
+        }
+    }
+};
+

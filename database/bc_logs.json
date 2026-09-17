@@ -1,0 +1,60 @@
+[
+  {
+    "id": 1789513160185,
+    "timestamp": "2026-09-15T22:59:20.185Z",
+    "operator": "268921357783190",
+    "type": "text",
+    "totalTarget": 3,
+    "success": 0,
+    "fail": 0,
+    "durationSec": "0.0",
+    "failedSample": []
+  },
+  {
+    "id": 1789513636326,
+    "timestamp": "2026-09-15T23:07:16.326Z",
+    "operator": "268921357783190",
+    "type": "text",
+    "totalTarget": 3,
+    "success": 3,
+    "fail": 0,
+    "durationSec": "7.4",
+    "failedSample": []
+  },
+  {
+    "id": 1789515201141,
+    "timestamp": "2026-09-15T23:33:21.141Z",
+    "operator": "268921357783190",
+    "totalTarget": 3,
+    "success": 3,
+    "fail": 0,
+    "durationSec": "7.1"
+  },
+  {
+    "id": 1789515866387,
+    "timestamp": "2026-09-15T23:44:26.388Z",
+    "operator": "268921357783190",
+    "totalTarget": 3,
+    "success": 3,
+    "fail": 0,
+    "durationSec": "7.4"
+  },
+  {
+    "id": 1789515923912,
+    "timestamp": "2026-09-15T23:45:23.912Z",
+    "operator": "268921357783190",
+    "totalTarget": 3,
+    "success": 3,
+    "fail": 0,
+    "durationSec": "6.1"
+  },
+  {
+    "id": 1789515969351,
+    "timestamp": "2026-09-15T23:46:09.351Z",
+    "operator": "268921357783190",
+    "totalTarget": 3,
+    "success": 3,
+    "fail": 0,
+    "durationSec": "6.0"
+  }
+]

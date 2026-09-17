@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Session & Database (SENSITIF!)
+sessions/
+database/
+
+# Config & Environment
+.env
+config.js
+
+# Logs & Temp
+*.log
+temp/
+backup_*/
+
+# OS Files
+.DS_Store
+Thumbs.db

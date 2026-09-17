@@ -1,0 +1,71 @@
+const { exec } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+module.exports = {
+    alias: ['tomp3', 'toaudio', 'vn'],
+    requiredLevel: 0,
+
+    run: async ({ sock, m, prefix }) => {
+        // 1. CEK MEDIA (Harus Reply Video)
+        const isQuotedVideo = m.quoted && m.quoted.msg && m.quoted.msg.videoMessage;
+
+        if (!isQuotedVideo) {
+            return await sock.sendMessage(m.key.remoteJid, { 
+                text: ` *ERROR*\n\nReply video dengan caption *${prefix}tomp3* untuk convert ke audio.` 
+            }, { quoted: m });
+        }
+
+        await sock.sendPresenceUpdate('composing', m.key.remoteJid);
+
+        try {
+            // 2. DOWNLOAD VIDEO
+            const mediaBuffer = await sock.downloadMediaMessage({ 
+                message: { videoMessage: m.quoted.msg.videoMessage } 
+            });
+
+            // 3. SIMPAN FILE SEMENTARA
+            const tempDir = path.join(__dirname, '../temp');
+            if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+
+            const inputFile = path.join(tempDir, `video_${Date.now()}.mp4`);
+            const outputFile = path.join(tempDir, `audio_${Date.now()}.mp3`);
+
+            fs.writeFileSync(inputFile, mediaBuffer);
+
+            // 4. CONVERT PAKAI FFMPEG
+            const ffmpegCmd = `ffmpeg -y -i "${inputFile}" -vn -acodec libmp3lame -ar 44100 -ab 192k "${outputFile}"`;
+
+            await new Promise((resolve, reject) => {
+                exec(ffmpegCmd, (error) => {
+                    if (error) reject(error);
+                    else resolve();
+                });
+            });
+
+            // 5. KIRIM AUDIO KE WA
+            const audioBuffer = fs.readFileSync(outputFile);
+            await sock.sendMessage(m.key.remoteJid, { 
+                audio: audioBuffer, 
+                mimetype: 'audio/mp4' 
+            }, { quoted: m });
+
+            // 6. HAPUS FILE SEMENTARA
+            fs.unlinkSync(inputFile);
+            fs.unlinkSync(outputFile);
+
+            console.log('[ToMP3] ✅ Berhasil convert video ke audio');
+
+        } catch (e) {
+            console.error('[ToMP3]  Error:', e.message);
+            await sock.sendMessage(m.key.remoteJid, { 
+                text: ` *GAGAL CONVERT KE MP3*\n\nError: ${e.message}\n\nPastikan ffmpeg sudah terinstall! Ketik: pkg install ffmpeg` 
+            }, { quoted: m });
+
+            // Cleanup jika error
+            try { if (inputFile) fs.unlinkSync(inputFile); } catch (err) {}
+            try { if (outputFile) fs.unlinkSync(outputFile); } catch (err) {}
+        }
+    }
+};
+

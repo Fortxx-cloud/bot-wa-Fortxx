@@ -1,0 +1,346 @@
+const fs = require('fs');
+const path = require('path');
+const { exec } = require('child_process');
+const config = require('../config');
+
+module.exports = {
+    name: 'owner',
+    alias: ['owner', 'creator', 'dev', 'shutdown', 'restart', 'setppbot', 'setppgc',
+            'setname', 'setbio', 'take', 'join', 'leave', 'block', 'unblock',
+            'bc', 'bcgc', 'setprefix', 'mode', 'autoread', 'autotyping',
+            'clearsession', 'getsession', 'addprem', 'delprem', 'listprem',
+            'addowner', 'delowner', 'listowner', 'eval', 'exec'],
+    desc: 'Semua command khusus Owner & Co-Owner Bot',
+    category: 'owner',
+    requiredLevel: 1,
+    run: async ({ sock, m, prefix, args, isOwner }) => {
+        // ===== VALIDASI OWNER & CO-OWNER =====
+        const sender = m.key.remoteJid;
+        const senderNum = sender.split('@')[0];
+        
+        const mainOwner = config.ownerNumber;
+        const coOwners = Array.isArray(config.coOwnerNumbers) ? config.coOwnerNumbers : [];
+        
+        const isMainOwner = senderNum === mainOwner;
+        const isCoOwner = coOwners.includes(senderNum);
+
+        // Jika bukan main owner DAN bukan co-owner, tolak akses
+        if (!isMainOwner && !isCoOwner) {
+            return await sock.sendMessage(m.key.remoteJid, {
+                text: '❌ *ACCESS DENIED*\n\nCommand ini khusus Owner & Co-Owner Bot!'
+            }, { quoted: m });
+        }
+
+        const command = args[0]?.toLowerCase() || '';
+
+        // ===== DAFTAR COMMAND YANG DIBLOKIR UNTUK CO-OWNER =====
+        const restrictedCommands = [
+            'shutdown', 'setname', 'setbio', 'mode', 'setprefix', 
+            'eval', 'exec', 'addowner', 'delowner', 'listowner'
+        ];
+
+        // Cek jika Co-Owner mencoba akses command berbahaya
+        if (isCoOwner && restrictedCommands.includes(command)) {
+            return await sock.sendMessage(m.key.remoteJid, {
+                text: ` *COMMAND RESTRICTED*\n\nMaaf, command *${prefix}${command}* hanya bisa diakses oleh Main Owner demi keamanan bot.`
+            }, { quoted: m });
+        }
+
+        // ===== 1. INFO OWNER =====
+        if (!command || command === 'owner' || command === 'creator' || command === 'dev') {
+            const ownerText = `
+═══════════════════════════════╗
+║   👑 *OWNER INFO* 👑          
+╚═══════════════════════════════╝
+
+👤 *Nama:* ${config.ownerName || 'FORTXX'}
+👑 *Main Owner:* +${mainOwner}
+🛡️ *Co-Owners:* ${coOwners.length > 0 ? coOwners.map(n => '+'+n).join(', ') : 'Tidak ada'}
+💻 *Platform:* Wabase-MD (Node.js)
+ *Tanggal:* ${new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+⏰ *Waktu:* ${new Date().toLocaleTimeString('id-ID')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Hubungi Main Owner untuk request fitur atau laporan bug!
+            `.trim();
+
+            await sock.sendMessage(m.key.remoteJid, {
+                text: ownerText,
+                mentions: [mainOwner + '@s.whatsapp.net', ...coOwners.map(n => n + '@s.whatsapp.net')]
+            }, { quoted: m });
+            return;
+        }
+
+        // ===== 2. SHUTDOWN BOT (Hanya Main Owner) =====
+        if (command === 'shutdown') {
+            await sock.sendMessage(m.key.remoteJid, { text: '👋 *Bot sedang dimatikan...*' }, { quoted: m });
+            setTimeout(() => process.exit(0), 2000);
+            return;
+        }
+
+        // ===== 3. RESTART BOT =====
+        if (command === 'restart') {
+            await sock.sendMessage(m.key.remoteJid, { text: '🔄 *Bot sedang restart...*' }, { quoted: m });
+            setTimeout(() => process.exit(1), 2000);
+            return;
+        }
+
+        // ===== 4. SET PP BOT =====
+        if (command === 'setppbot') {
+            const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            if (!quoted?.imageMessage) return await sock.sendMessage(m.key.remoteJid, { text: `❌ *Reply foto* dengan caption *${prefix}setppbot*` }, { quoted: m });
+            try {
+                const media = await sock.downloadMediaMessage(m.message.extendedTextMessage.contextInfo.quotedMessage);
+                const tempDir = path.join(__dirname, '../temp');
+                if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+                const tempFile = path.join(tempDir, 'pp_bot.jpg');
+                fs.writeFileSync(tempFile, media);
+                await sock.updateProfilePicture(sock.user.id, { url: tempFile });
+                fs.unlinkSync(tempFile);
+                await sock.sendMessage(m.key.remoteJid, { text: '✅ *Foto profil bot berhasil diubah!*' }, { quoted: m });
+            } catch (e) {
+                await sock.sendMessage(m.key.remoteJid, { text: '❌ *Gagal mengubah foto profil bot.*' }, { quoted: m });
+            }
+            return;
+        }
+
+        // ===== 5. SET PP GRUP =====
+        if (command === 'setppgc') {
+            if (!m.isGroup) return await sock.sendMessage(m.key.remoteJid, { text: '❌ *Khusus grup!*' }, { quoted: m });
+            const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            if (!quoted?.imageMessage) return await sock.sendMessage(m.key.remoteJid, { text: `❌ *Reply foto* dengan caption *${prefix}setppgc*` }, { quoted: m });
+            try {
+                const media = await sock.downloadMediaMessage(m.message.extendedTextMessage.contextInfo.quotedMessage);
+                const tempDir = path.join(__dirname, '../temp');
+                if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+                const tempFile = path.join(tempDir, 'pp_gc.jpg');
+                fs.writeFileSync(tempFile, media);
+                await sock.updateProfilePicture(m.key.remoteJid, { url: tempFile });
+                fs.unlinkSync(tempFile);
+                await sock.sendMessage(m.key.remoteJid, { text: '✅ *Foto profil grup berhasil diubah!*' }, { quoted: m });
+            } catch (e) {
+                await sock.sendMessage(m.key.remoteJid, { text: ' *Gagal mengubah foto profil grup.*' }, { quoted: m });
+            }
+            return;
+        }
+
+        // ===== 6. SET NAMA BOT (Hanya Main Owner) =====
+        if (command === 'setname') {
+            const newName = args.slice(1).join(' ');
+            if (!newName) return await sock.sendMessage(m.key.remoteJid, { text: `❌ Masukkan nama!\nContoh: *${prefix}setname Wabase Bot*` }, { quoted: m });
+            try {
+                await sock.updateProfileName(newName);
+                await sock.sendMessage(m.key.remoteJid, { text: `✅ *Nama bot diubah ke: ${newName}*` }, { quoted: m });
+            } catch (e) {
+                await sock.sendMessage(m.key.remoteJid, { text: '❌ *Gagal mengubah nama.*' }, { quoted: m });
+            }
+            return;
+        }
+
+        // ===== 7. SET BIO BOT (Hanya Main Owner) =====
+        if (command === 'setbio') {
+            const newBio = args.slice(1).join(' ');
+            if (!newBio) return await sock.sendMessage(m.key.remoteJid, { text: `❌ Masukkan bio!\nContoh: *${prefix}setbio Bot by FORTXX*` }, { quoted: m });
+            try {
+                await sock.updateProfileStatus(newBio);
+                await sock.sendMessage(m.key.remoteJid, { text: `✅ *Bio bot diubah ke: ${newBio}*` }, { quoted: m });
+            } catch (e) {
+                await sock.sendMessage(m.key.remoteJid, { text: '❌ *Gagal mengubah bio.*' }, { quoted: m });
+            }
+            return;
+        }
+
+        // ===== 8. TAKE STIKER =====
+        if (command === 'take') {
+            const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            if (!quoted?.stickerMessage) return await sock.sendMessage(m.key.remoteJid, { text: `❌ *Reply stiker* dengan caption *${prefix}take NamaPack|NamaAuthor*` }, { quoted: m });
+            const text = args.slice(1).join(' ');
+            const [packname, author] = text.split('|');
+            if (!packname || !author) return await sock.sendMessage(m.key.remoteJid, { text: `❌ *Format salah!*\nGunakan: *${prefix}take Wabase|Bot*` }, { quoted: m });
+            await sock.sendMessage(m.key.remoteJid, { text: `✅ *Metadata stiker diubah!*\n\nPack: ${packname}\nAuthor: ${author}` }, { quoted: m });
+            return;
+        }
+
+        // ===== 9. JOIN GRUP =====
+        if (command === 'join') {
+            const link = args[1];
+            if (!link || !link.includes('chat.whatsapp.com')) return await sock.sendMessage(m.key.remoteJid, { text: `❌ Masukkan link grup!\nContoh: *${prefix}join https://chat.whatsapp.com/xxxxx*` }, { quoted: m });
+            try {
+                const code = link.split('chat.whatsapp.com/')[1];
+                await sock.groupAcceptInvite(code);
+                await sock.sendMessage(m.key.remoteJid, { text: '✅ *Berhasil join grup!*' }, { quoted: m });
+            } catch (e) {
+                await sock.sendMessage(m.key.remoteJid, { text: '❌ *Gagal join grup.*' }, { quoted: m });
+            }
+            return;
+        }
+
+        // ===== 10. LEAVE GRUP =====
+        if (command === 'leave') {
+            if (!m.isGroup) return await sock.sendMessage(m.key.remoteJid, { text: '❌ *Khusus grup!*' }, { quoted: m });
+            await sock.sendMessage(m.key.remoteJid, { text: '👋 *Bot keluar dari grup...*' }, { quoted: m });
+            setTimeout(() => sock.groupLeave(m.key.remoteJid), 2000);
+            return;
+        }
+
+        // ===== 11. BLOCK USER =====
+        if (command === 'block') {
+            const target = m.message?.extendedTextMessage?.contextInfo?.participant || m.key.remoteJid;
+            if (!target) return await sock.sendMessage(m.key.remoteJid, { text: '❌ *Reply user yang mau di-block!*' }, { quoted: m });
+            try {
+                await sock.updateBlockStatus(target, 'block');
+                await sock.sendMessage(m.key.remoteJid, { text: '✅ *User berhasil di-block!*' }, { quoted: m });
+            } catch (e) {
+                await sock.sendMessage(m.key.remoteJid, { text: '❌ *Gagal block user.*' }, { quoted: m });
+            }
+            return;
+        }
+
+        // ===== 12. UNBLOCK USER =====
+        if (command === 'unblock') {
+            const target = m.message?.extendedTextMessage?.contextInfo?.participant || m.key.remoteJid;
+            if (!target) return await sock.sendMessage(m.key.remoteJid, { text: '❌ *Reply user yang mau di-unblock!*' }, { quoted: m });
+            try {
+                await sock.updateBlockStatus(target, 'unblock');
+                await sock.sendMessage(m.key.remoteJid, { text: '✅ *User berhasil di-unblock!*' }, { quoted: m });
+            } catch (e) {
+                await sock.sendMessage(m.key.remoteJid, { text: '❌ *Gagal unblock user.*' }, { quoted: m });
+            }
+            return;
+        }
+
+        // ===== 13. BROADCAST =====
+        if (command === 'bc' || command === 'broadcast') {
+            const text = args.slice(1).join(' ');
+            if (!text) return await sock.sendMessage(m.key.remoteJid, { text: `❌ Masukkan pesan!\nContoh: *${prefix}bc Halo semua!*` }, { quoted: m });
+            await sock.sendMessage(m.key.remoteJid, { text: `✅ *Broadcast terkirim!*\n\nPesan: ${text}` }, { quoted: m });
+            return;
+        }
+
+        // ===== 14. SET PREFIX (Hanya Main Owner) =====
+        if (command === 'setprefix') {
+            const newPrefix = args[1];
+            if (!newPrefix) return await sock.sendMessage(m.key.remoteJid, { text: `❌ Masukkan prefix baru!\nContoh: *${prefix}setprefix !*` }, { quoted: m });
+            config.prefix = newPrefix;
+            await sock.sendMessage(m.key.remoteJid, { text: `✅ *Prefix diubah ke: ${newPrefix}*` }, { quoted: m });
+            return;
+        }
+
+        // ===== 15. MODE BOT (Hanya Main Owner) =====
+        if (command === 'mode') {
+            const mode = args[1]?.toLowerCase();
+            if (!mode || !['public', 'self'].includes(mode)) return await sock.sendMessage(m.key.remoteJid, { text: `❌ Pilih mode: *public* atau *self*\nContoh: *${prefix}mode public*` }, { quoted: m });
+            config.mode = mode;
+            await sock.sendMessage(m.key.remoteJid, { text: `✅ *Mode bot diubah ke: ${mode}*` }, { quoted: m });
+            return;
+        }
+
+        // ===== 16. AUTO READ =====
+        if (command === 'autoread') {
+            config.autoRead = !config.autoRead;
+            await sock.sendMessage(m.key.remoteJid, { text: `✅ *Auto Read: ${config.autoRead ? 'ON' : 'OFF'}*` }, { quoted: m });
+            return;
+        }
+
+        // ===== 17. AUTO TYPING =====
+        if (command === 'autotyping') {
+            config.autoTyping = !config.autoTyping;
+            await sock.sendMessage(m.key.remoteJid, { text: `✅ *Auto Typing: ${config.autoTyping ? 'ON' : 'OFF'}*` }, { quoted: m });
+            return;
+        }
+
+        // ===== 18. CLEAR SESSION =====
+        if (command === 'clearsession') {
+            const sessionPath = './session';
+            if (fs.existsSync(sessionPath)) {
+                fs.readdirSync(sessionPath).forEach(file => {
+                    if (file !== 'creds.json') fs.unlinkSync(path.join(sessionPath, file));
+                });
+                await sock.sendMessage(m.key.remoteJid, { text: '✅ *Session lama berhasil dibersihkan!*' }, { quoted: m });
+            } else {
+                await sock.sendMessage(m.key.remoteJid, { text: '❌ *Folder session tidak ditemukan.*' }, { quoted: m });
+            }
+            return;
+        }
+
+        // ===== 19. GET SESSION =====
+        if (command === 'getsession') {
+            const credsPath = './session/creds.json';
+            if (fs.existsSync(credsPath)) {
+                await sock.sendMessage(m.key.remoteJid, {
+                    document: fs.readFileSync(credsPath),
+                    fileName: 'creds.json',
+                    mimetype: 'application/json'
+                }, { quoted: m });
+            } else {
+                await sock.sendMessage(m.key.remoteJid, { text: '❌ *File session tidak ditemukan.*' }, { quoted: m });
+            }
+            return;
+        }
+
+        // ===== 20. EVAL CODE (Hanya Main Owner) =====
+        if (command === 'eval') {
+            const code = args.slice(1).join(' ');
+            if (!code) return await sock.sendMessage(m.key.remoteJid, { text: `❌ Masukkan kode!\nContoh: *${prefix}eval return 1+1*` }, { quoted: m });
+            try {
+                const result = await eval(code);
+                await sock.sendMessage(m.key.remoteJid, { text: `✅ *Result:*\n\`\`\`${JSON.stringify(result, null, 2)}\`\`\`` }, { quoted: m });
+            } catch (e) {
+                await sock.sendMessage(m.key.remoteJid, { text: `❌ *Error:*\n\`\`\`${e.message}\`\`\`` }, { quoted: m });
+            }
+            return;
+        }
+
+        // ===== 21. EXEC SHELL (Hanya Main Owner) =====
+        if (command === 'exec') {
+            const cmd = args.slice(1).join(' ');
+            if (!cmd) return await sock.sendMessage(m.key.remoteJid, { text: `❌ Masukkan command!\nContoh: *${prefix}exec ls -la*` }, { quoted: m });
+            exec(cmd, (error, stdout, stderr) => {
+                const output = stdout || stderr || error?.message || 'No output';
+                sock.sendMessage(m.key.remoteJid, { text: `✅ *Output:*\n\`\`\`${output.substring(0, 4000)}\`\`\`` }, { quoted: m });
+            });
+            return;
+        }
+
+        // ===== DEFAULT: TAMPILKAN LIST COMMAND =====
+        const helpText = `
+╔═══════════════════════════════╗
+║   👑 *OWNER COMMANDS* 👑      ║
+╚═══════════════════════════════╝
+
+ *INFO & PROFIL*
+• ${prefix}owner → Info owner
+• ${prefix}setppbot → Ganti foto profil bot
+• ${prefix}setppgc → Ganti foto profil grup
+• ${prefix}setname → Ganti nama bot *(Main Owner Only)*
+• ${prefix}setbio → Ganti bio bot *(Main Owner Only)*
+
+⚙️ *KONTROL BOT*
+• ${prefix}shutdown → Matikan bot *(Main Owner Only)*
+• ${prefix}restart → Restart bot
+• ${prefix}setprefix → Ganti prefix *(Main Owner Only)*
+• ${prefix}mode → Ganti mode *(Main Owner Only)*
+• ${prefix}autoread → Toggle auto read
+• ${prefix}autotyping → Toggle auto typing
+
+👥 *GRUP & USER*
+• ${prefix}join → Join grup via link
+• ${prefix}leave → Keluar dari grup
+• ${prefix}block → Block user
+• ${prefix}unblock → Unblock user
+• ${prefix}bc → Broadcast pesan
+
+🛠️ *TOOLS*
+• ${prefix}take → Ganti metadata stiker
+• ${prefix}clearsession → Hapus session lama
+• ${prefix}getsession → Download session file
+• ${prefix}eval → Execute JS code *(Main Owner Only)*
+• ${prefix}exec → Execute shell *(Main Owner Only)*
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Made with ❤️ by FORTXX
+        `.trim();
+
+        await sock.sendMessage(m.key.remoteJid, { text: helpText }, { quoted: m });
+    }
+};
