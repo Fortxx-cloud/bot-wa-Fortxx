@@ -1,159 +1,183 @@
 const fs = require('fs');
 const path = require('path');
 
+console.log('╔═══════════════════════════════════════════╗');
+console.log('║   HANDLER.JS v4.0 - PREMIUM USER ID UI    ║');
+console.log('╚═══════════════════════════════════════════╝');
+
+const config = require('./config');
 const PREFIX = '.';
 const PLUGINS_DIR = path.join(__dirname, 'plugins');
 
-// Fungsi cleaning ID biar konsisten (hapus @lid, @s.whatsapp.net, dll)
-const cleanId = (jid) => {
-  if (!jid) return null;
-  return jid.replace(/[^0-9]/g, '').split(':')[0];
-};
+// ===== FUNGSI BERSIHKAN JID =====
+function cleanJid(jid) {
+    if (!jid) return null;
+    return jid.replace(/[^0-9]/g, '').split('@')[0];
+}
 
-const plugins = {};
-const loadPlugins = () => {
-  if (!fs.existsSync(PLUGINS_DIR)) return;
-  fs.readdirSync(PLUGINS_DIR).filter(f => f.endsWith('.js')).forEach(file => {
+// ===== DATABASE USER AUTO-SAVE =====
+function saveUserToDatabase(senderNum) {
     try {
-      const pluginPath = path.join(PLUGINS_DIR, file);
-      delete require.cache[require.resolve(pluginPath)];
-      const plugin = require(pluginPath);
-      if (plugin.alias && Array.isArray(plugin.alias)) {
-        plugin.alias.forEach(alias => plugins[alias.toLowerCase()] = plugin);
-      }
-    } catch (err) { console.error(`[PLUGIN ERROR] ${file}: ${err.message}`); }
-  });
-  console.log(`[SYSTEM] Total ${Object.keys(plugins).length} commands loaded.`);
-};
+        const dbDir = path.join(__dirname, 'database');
+        if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+
+        const dbPath = path.join(dbDir, 'users.json');
+        if (!fs.existsSync(dbPath)) fs.writeFileSync(dbPath, '[]');
+
+        let users = JSON.parse(fs.readFileSync(dbPath));
+        if (!users.includes(senderNum)) {
+            users.push(senderNum);
+            fs.writeFileSync(dbPath, JSON.stringify(users, null, 2));
+            console.log(`[+] User baru terdaftar: ${senderNum}`);
+            return true;
+        }
+        return false;
+    } catch (e) {
+        console.error('[USER SAVE ERROR]', e.message);
+        return false;
+    }
+}
+
+// ===== LOAD PLUGINS =====
+const plugins = {};
+function loadPlugins() {
+    if (!fs.existsSync(PLUGINS_DIR)) {
+        console.log('[PLUGIN] Folder plugins tidak ditemukan');
+        return;
+    }
+    const files = fs.readdirSync(PLUGINS_DIR).filter(f => f.endsWith('.js'));
+    for (const file of files) {
+        try {
+            const pluginPath = path.join(PLUGINS_DIR, file);
+            delete require.cache[require.resolve(pluginPath)];
+            const plugin = require(pluginPath);
+            if (plugin.alias && Array.isArray(plugin.alias)) {
+                for (const alias of plugin.alias) {
+                    plugins[alias.toLowerCase()] = plugin;
+                }
+            }
+            console.log(`[PLUGIN] / ${file} -> ${plugin.alias ? plugin.alias.join(', ') : 'No Alias'}`);
+        } catch (err) {
+            console.error(`[PLUGIN] ${file}: ${err.message}`);
+        }
+    }
+    console.log(`[PLUGIN] Total ${Object.keys(plugins).length} command loaded`);
+}
 loadPlugins();
 
+// ===== MAIN HANDLER (ASYNC FUNCTION) =====
 module.exports = async (sock, m) => {
-  try {
-    const msg = m.message || m;
-    
-    // DEBUG LOG - buat tracking pesan masuk
-    console.log('[DEBUG] Message received:', {
-      fromMe: m.key.fromMe,
-      remoteJid: m.key.remoteJid,
-      participant: m.key.participant,
-      hasMessage: !!m.message,
-      type: Object.keys(m.message || {})[0]
-    });
+    try {
+        const msg = m.message || m;
+        const text = msg.conversation
+            || msg.extendedTextMessage?.text
+            || msg.imageMessage?.caption
+            || msg.videoMessage?.caption
+            || '';
 
-    const text = msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || '';
-    if (!text || !text.startsWith(PREFIX)) return;
+        if (!text || !text.startsWith(PREFIX)) return;
 
-    const args = text.slice(PREFIX.length).trim().split(/\s+/);
-    const command = args.shift().toLowerCase();
+        const args = text.slice(PREFIX.length).trim().split(/\s+/);
+        const command = args.shift().toLowerCase();
+        const rawSender = m.key.participant || m.key.remoteJid;
+        const senderNumber = cleanJid(rawSender);
 
-    let rawSender;
-      if (m.key.fromMe) {
-        rawSender = sock.user?.lid || sock.user?.id;
-      } else {
-        rawSender = m.key.participant || m.key.remoteJid;
-      }
-    const senderId = cleanId(rawSender);
+        console.log(`[CMD] ${PREFIX}${command} | User ID: ${senderNumber}`);
 
-    // LOAD DATABASE
-    const whitelistPath = path.join(__dirname, 'database', 'whitelist.json');
-    const memberPath = path.join(__dirname, 'database', 'members.json');
+        // ===== AUTO SAVE USER ID =====
+        saveUserToDatabase(senderNumber);
 
-    let WHITELIST_IDS = fs.existsSync(whitelistPath) ? JSON.parse(fs.readFileSync(whitelistPath)) : [];
-    let MEMBER_IDS = fs.existsSync(memberPath) ? JSON.parse(fs.readFileSync(memberPath)) : [];
+        // ===== CEK BLACKLIST / CABUT AKSES (PREMIUM USER ID UI) =====
+        try {
+            const blacklistPath = path.join(__dirname, 'database', 'blacklist.json');
+            if (fs.existsSync(blacklistPath)) {
+                const blacklistedUsers = JSON.parse(fs.readFileSync(blacklistPath));
+                const cleanSender = senderNumber.replace(/[^0-9]/g, '');
+                
+                if (blacklistedUsers.includes(cleanSender)) {
+                    console.log(`[BLACKLIST] Akses ditolak untuk User ID: ${cleanSender}`);
+                    
+                    const now = new Date().toLocaleString('id-ID', { 
+                        day: 'numeric', month: 'short', year: 'numeric', 
+                        hour: '2-digit', minute: '2-digit' 
+                    });
 
-    // IDENTITAS BOT SENDIRI
+                    const rejectMsg = `
+╔══════════════════════════════════╗
+║      🚫 *AKSES DIBLOKIR* 🚫      ║
+══════════════════════════════════╝
 
-    const botLid = sock.user?.lid ? cleanId(sock.user.lid) : null;
-    const botNumber = sock.user?.id ? cleanId(sock.user.id) : null;
+⚠️ *SYSTEM SECURITY ALERT*
 
-    // LOGIKA AKSES - HAPUS m.key.fromMe AGAR BISA CHAT DARI NOMOR SENDIRI
-    const isSelf = (botLid && senderId === botLid) || (botNumber && senderId === botNumber);
-    const isOwner = isSelf || WHITELIST_IDS.includes(senderId);
-    const isMember = MEMBER_IDS.includes(senderId);
+ *User ID:* \`${cleanSender}\`
+📅 *Timestamp:* _${now}_
+🔒 *Status:* **BLACKLISTED**
 
-    console.log('[DEBUG] Access check:', { senderId, botLid, botNumber, isSelf, isOwner, isMember });
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚫 *ACTION:* Command Access Revoked
 
-    // BLOKIR JIKA BUKAN OWNER DAN BUKAN MEMBER
-    
+Akun dengan User ID tersebut telah 
+dicabut hak aksesnya secara permanen 
+oleh *System Administrator*.
 
-      
+📩 Hubungi Owner jika ini adalah 
+kesalahan sistem.
 
-      
-      // === SISTEM REGISTRASI OTOMATIS (OWNER & MEMBER) ===
-      if (command === 'daftar') {
-          const isOwnerCmd = args.join(' ').includes('Rian1234') && args[0] !== 'member';
-          const isMemberCmd = args[0] === 'member' && args.join(' ').includes('Rian1234');
+️ *Wabase-MD Security Protocol*
+                    `.trim();
 
-          if (isOwnerCmd || isMemberCmd) {
-              // KEAMANAN: Cuma Owner yang boleh nambah Member
-              if (isMemberCmd && !isOwner) {
-                  return await sock.sendMessage(m.key.remoteJid, { text: '❌ *DITOLAK!*\n\nHanya Owner yang berhak menambah Member.' });
-              }
+                    return await sock.sendMessage(m.key.remoteJid, { 
+                        text: rejectMsg 
+                    }, { quoted: m });
+                }
+            }
+        } catch (e) {
+            console.error('[BLACKLIST CHECK ERROR]', e.message);
+        }
 
-              const contextInfo = msg.extendedTextMessage?.contextInfo;
-              if (contextInfo && contextInfo.participant) {
-                  const targetLid = contextInfo.participant;
-                  const cleanLid = targetLid.replace(/[^0-9]/g, '').split(':')[0];
+        // ===== WHITELIST CHECK (OPSIONAL) =====
+        /*
+        const WHITELIST_NUMBERS = [
+            '3333988664344', '268921357783190', '265313763812141', 
+            '26348441382730', '67040194896060', '6289976543210', '6288971091221'
+        ];
+        if (WHITELIST_NUMBERS.length > 0 && !WHITELIST_NUMBERS.includes(senderNumber)) {
+            return await sock.sendMessage(m.key.remoteJid, {
+                text: '❌ *Akses ditolak. User ID tidak terdaftar di Whitelist.*'
+            }, { quoted: m });
+        }
+        */
 
-                  if (isOwnerCmd) {
-                      // --- LOGIC OWNER ---
-                      const ownersPath = path.join(__dirname, 'data', 'owners.json');
-                      let ownersDb = { owners: [] };
-                      if (fs.existsSync(ownersPath)) ownersDb = JSON.parse(fs.readFileSync(ownersPath, 'utf8'));
-                      if (!ownersDb.owners.includes(targetLid)) ownersDb.owners.push(targetLid);
-                      fs.writeFileSync(ownersPath, JSON.stringify(ownersDb, null, 2));
+        // ===== PROCESS COMMAND VIA PLUGIN =====
+        const plugin = plugins[command];
 
-                      const whitelistPath = path.join(__dirname, 'database', 'whitelist.json');
-                      let whitelistDb = [];
-                      if (fs.existsSync(whitelistPath)) whitelistDb = JSON.parse(fs.readFileSync(whitelistPath, 'utf8'));
-                      if (!whitelistDb.includes(cleanLid)) whitelistDb.push(cleanLid);
-                      fs.writeFileSync(whitelistPath, JSON.stringify(whitelistDb, null, 2));
+        if (!plugin) {
+            console.log(`[CMD] ${PREFIX}${command} - TIDAK DITEMUKAN`);
+            return await sock.sendMessage(m.key.remoteJid, {
+                text: ` Command *${PREFIX}${command}* tidak ditemukan.\n\nKetik *${PREFIX}menu* untuk daftar command.`
+            }, { quoted: m });
+        }
 
-                      if (!WHITELIST_IDS.includes(cleanLid)) WHITELIST_IDS.push(cleanLid);
-                      await sock.sendMessage(m.key.remoteJid, { text: '✅ *OWNER DITAMBAHKAN!*\n\nLID: ' + targetLid + '\nNomor: ' + cleanLid });
-                  } 
-                  else if (isMemberCmd) {
-                      // --- LOGIC MEMBER ---
-                      const memberPath = path.join(__dirname, 'database', 'members.json');
-                      let memberDb = [];
-                      if (fs.existsSync(memberPath)) memberDb = JSON.parse(fs.readFileSync(memberPath, 'utf8'));
-                      if (!memberDb.includes(cleanLid)) memberDb.push(cleanLid);
-                      fs.writeFileSync(memberPath, JSON.stringify(memberDb, null, 2));
+        console.log(`[CMD] / ${PREFIX}${command} diproses oleh plugin`);
 
-                      if (!MEMBER_IDS.includes(cleanLid)) MEMBER_IDS.push(cleanLid);
-                      await sock.sendMessage(m.key.remoteJid, { text: '✅ *MEMBER DITAMBAHKAN!*\n\nNomor: ' + cleanLid + '\nSekarang bisa akses fitur Member!' });
-                  }
-              } else {
-                  await sock.sendMessage(m.key.remoteJid, { text: '⚠️ *GAGAL!*\n\nKamu harus **REPLY** pesan orangnya.\nFormat Owner: .daftar Rian1234\nFormat Member: .daftar member Rian1234' });
-              }
-              return;
-          }
-      }
-      // ===================================================
+        await plugin.run({
+            sock,
+            m,
+            prefix: PREFIX,
+            args,
+            command,
+            senderNumber,
+            text
+        });
 
-      if (!isOwner && !isMember) {
-      return await sock.sendMessage(m.key.remoteJid, {
-
-    
-        text: '🚫 *AKSES DITOLAK*\n\nHalo kak! Kamu belum terdaftar sebagai member.\nSilakan chat ke Owner dan minta untuk didaftarkan.\n\n*Status:* Non-Member'
-      }, { quoted: m });
+    } catch (err) {
+        console.error('[HANDLER ERROR]', err);
+        try {
+            await sock.sendMessage(m.key.remoteJid, {
+                text: `❌ *System Error:* ${err.message}`
+            }, { quoted: m });
+        } catch (e) {
+            console.error('[GAGAL KIRIM ERROR MSG]', e);
+        }
     }
-
-    const plugin = plugins[command];
-    if (!plugin) {
-      return await sock.sendMessage(m.key.remoteJid, {
-        text: ` Command *${PREFIX}${command}* tidak ditemukan.`
-      }, { quoted: m });
-    }
-
-    if (plugin.ownerOnly && !isOwner) {
-      return await sock.sendMessage(m.key.remoteJid, { text: '🔒 *Hanya Owner yang bisa pakai command ini!*' }, { quoted: m });
-    }
-
-    await plugin.run({
-      sock, m, prefix: PREFIX, args, command,
-      senderId, senderFullId: rawSender, text,
-      isOwner, isMember
-    });
-  } catch (err) { console.error('[HANDLER ERROR]', err); }
 };
